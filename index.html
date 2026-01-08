@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>双人AI体育课助教系统</title>
+    
+    <!-- 预加载资源 -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" as="script">
+    <link rel="preload" href="styles/main.css" as="style">
+    
+    <!-- 样式 -->
+    <link rel="stylesheet" href="styles/main.css">
+    
+    <!-- 字体图标 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Microsoft YaHei', sans-serif;
+            background: #000;
+            overflow: hidden;
+            color: white;
+        }
+        
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            transition: opacity 0.3s;
+        }
+        
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #4CAF50;
+            animation: spin 1s ease-in-out infinite;
+            margin-bottom: 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .loading-progress {
+            width: 200px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        
+        .loading-progress-bar {
+            height: 100%;
+            background: #4CAF50;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .loading-text {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #aaa;
+        }
+        
+        #app {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .debug-panel {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #00ff00;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #00ff00;
+            z-index: 100;
+            max-width: 300px;
+            backdrop-filter: blur(5px);
+        }
+        
+        .debug-panel.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- 加载界面 -->
+    <div id="loading">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">正在启动AI运动识别系统...</div>
+        <div class="loading-progress">
+            <div class="loading-progress-bar" id="progressBar"></div>
+        </div>
+        <div class="loading-text" id="progressText">0%</div>
+    </div>
+    
+    <!-- 主应用容器 -->
+    <div id="app">
+        <!-- 视频和Canvas -->
+        <video id="videoElement" playsinline style="display: none;"></video>
+        <canvas id="mainCanvas"></canvas>
+        
+        <!-- 调试面板 -->
+        <div id="debugPanel" class="debug-panel hidden">
+            <div>系统状态: <span id="debugStatus">初始化中...</span></div>
+            <div>FPS: <span id="debugFPS">0</span></div>
+            <div>检测时间: <span id="debugDetectionTime">0ms</span></div>
+            <div>渲染时间: <span id="debugRenderTime">0ms</span></div>
+            <div>内存: <span id="debugMemory">0MB</span></div>
+        </div>
+    </div>
+    
+    <!-- 模块加载 -->
+    <script type="module">
+        // 模块加载器
+        const MODULES = {
+            core: [
+                'src/core/DualPoseTracker.js',
+                'src/core/ExerciseDetector.js',
+                'src/core/PerformanceMonitor.js'
+            ],
+            rendering: [
+                'src/rendering/CanvasRenderer.js',
+                'src/rendering/AvatarSystem.js',
+                'src/rendering/UIRenderer.js'
+            ],
+            components: [
+                'src/components/StudentManager.js',
+                'src/components/ScoreManager.js',
+                'src/components/ExerciseManager.js'
+            ],
+            utils: [
+                'src/utils/MathUtils.js',
+                'src/utils/AudioManager.js',
+                'src/utils/DataExporter.js'
+            ]
+        };
+        
+        // 更新加载进度
+        function updateProgress(module, progress) {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const totalModules = Object.values(MODULES).flat().length;
+            
+            // 计算总体进度
+            const loaded = module * 100 + progress;
+            const total = totalModules * 100;
+            const percentage = Math.min(100, Math.round((loaded / total) * 100));
+            
+            progressBar.style.width = percentage + '%';
+            progressText.textContent = percentage + '%';
+        }
+        
+        // 动态加载模块
+        async function loadModules() {
+            let moduleIndex = 0;
+            const allModules = Object.values(MODULES).flat();
+            
+            for (const modulePath of allModules) {
+                try {
+                    await import(modulePath);
+                    moduleIndex++;
+                    updateProgress(moduleIndex, 100);
+                } catch (error) {
+                    console.error(`Failed to load module ${modulePath}:`, error);
+                    // 继续加载其他模块
+                    moduleIndex++;
+                    updateProgress(moduleIndex, 100);
+                }
+            }
+            
+            // 所有模块加载完成
+            setTimeout(() => {
+                document.getElementById('loading').style.opacity = '0';
+                setTimeout(() => {
+                    document.getElementById('loading').style.display = 'none';
+                }, 300);
+            }, 500);
+        }
+        
+        // 启动应用
+        window.addEventListener('DOMContentLoaded', async () => {
+            // 首先加载核心模块
+            await loadModules();
+            
+            // 初始化应用
+            if (typeof window.initApp === 'function') {
+                window.initApp();
+            }
+        });
+    </script>
+    
+    <!-- 主应用脚本 -->
+    <script src="src/app.js" type="module"></script>
+</body>
+</html>
